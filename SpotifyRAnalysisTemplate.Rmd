@@ -1,0 +1,314 @@
+---
+title: "Spotify Streaming History Analysis"
+author: "@clearisawreck"
+output: html_notebook
+---
+
+# Front Matter
+
+```{r}
+# clean up workspace environment
+rm(list = ls())
+
+# all packages used for this project
+library(tidyverse)
+library(lubridate)
+library(mosaic)
+library(knitr)
+```
+
+# Data Access
+
+### Import Data Sources
+
+```{r}
+# initializing streaming history csv files for me
+clare0 <- read_csv("clare0.csv")
+clare1 <- read_csv("clare1.csv")
+clare2 <- read_csv("clare2.csv")
+
+# initializing streaming history csv files for my dad
+dad0 <- read_csv("dad0.csv")
+dad1 <- read_csv("dad1.csv")
+dad2 <- read_csv("dad2.csv")
+
+# reading spotify song database
+SpotifySongs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv')
+```
+
+### Inspecting Data Intake
+
+```{r}
+# inspecting streaming history data tables
+str(clare0)
+head(clare0)
+
+# inspecting spotify songs data set
+str(SpotifySongs)
+head(SpotifySongs)
+```
+
+# Initial Data Wrangling
+
+### Combine Streaming History Data Sets
+
+```{r}
+ClareHistory <- bind_rows(clare0, clare1,  clare2)
+DadHistory <- bind_rows(dad0, dad1, dad2)
+```
+
+### Join Data Sets
+
+```{r}
+# use left_join to combine streaming history data sets with spotify songs data set
+ClareStreamingData <- ClareHistory %>%
+  left_join(SpotifySongs, by = c("trackName" = "track_name", "artistName" = "track_artist")) %>%
+  distinct(endTime, trackName, .keep_all = TRUE) # remove duplicates by looking at endTime and trackName repetition
+
+DadStreamingData <- DadHistory %>%
+  left_join(SpotifySongs, by = c("trackName" = "track_name", "artistName" = "track_artist")) %>%
+  distinct(endTime, trackName, .keep_all = TRUE)
+```
+
+### Examine Joined Data Sets
+
+```{r}
+str(ClareStreamingData)
+head(ClareStreamingData)
+```
+
+# Examine Top Genres and Subgenres
+
+### Data Wrangling (Genres)
+
+```{r}
+ClareGenres <- ClareStreamingData %>%
+  group_by(playlist_genre) %>%
+  summarize(count = n()) %>%
+  na.omit() %>%
+  mutate(clare = (count/sum(count))*100)
+
+DadGenres <- DadStreamingData %>%
+  group_by(playlist_genre) %>%
+  summarize(count = n()) %>%
+  na.omit() %>%
+  mutate(dad = (count/sum(count))*100)
+
+# combining our respective genre data sets and using pivot_longer so graphing is easier
+CombinedGenres <- ClareGenres %>%
+  full_join(DadGenres, by = c("playlist_genre" = "playlist_genre")) %>%
+  select(playlist_genre, clare, dad) %>%
+  pivot_longer(cols = c(clare, dad), names_to = "who", values_to = "percentage")
+``` 
+
+### Data Visualization (Genres)
+
+```{r}
+ggplot(CombinedGenres) + geom_col(aes(x = reorder(playlist_genre, -percentage), y = percentage, group = playlist_genre, fill = who)) + labs(x = "genre") + ggtitle("Clare and Dad Top Genres")
+```
+
+### Data Wrangling (Subgenres)
+
+```{r}
+ClareSubgenres <- ClareStreamingData %>%
+  group_by(playlist_subgenre) %>%
+  summarize(count = n()) %>%
+  na.omit() %>%
+  mutate(clare = (count/sum(count))*100)
+
+DadSubgenres <- DadStreamingData %>%
+  group_by(playlist_subgenre) %>%
+  summarize(count = n()) %>%
+  na.omit() %>%
+  mutate(dad = (count/sum(count))*100)
+
+CombinedSubgenres <- ClareSubgenres %>%
+  full_join(DadSubgenres, by = c("playlist_subgenre" = "playlist_subgenre")) %>%
+  select(playlist_subgenre, clare, dad) %>%
+  pivot_longer(cols = c(clare, dad), names_to = "who", values_to = "percentage")
+```
+
+### Data Visualization (Subgenres)
+
+```{r}
+ggplot(CombinedSubgenres) + geom_col(aes(x = reorder(playlist_subgenre, -percentage), y = percentage, group = playlist_subgenre, fill = who)) + labs(x = "subgenre") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Clare and Dad Top Subgenres")
+```
+
+# Examining Total Listening Time
+
+### Data Wrangling (Minutes Streamed)
+
+```{r}
+ClareStreamingData %>%
+  summarize(ClareTime = sum(msPlayed)/60000)
+
+DadStreamingData %>%
+  summarize(DadTime = sum(msPlayed)/60000)
+```
+
+# Examine Top Artists
+
+### Data Wrangling (Top Artists by Number of Songs Listened To)
+
+```{r}
+ClareArtistsCount <- ClareStreamingData %>%
+  group_by(artistName) %>%
+  summarize(count = n()) %>% # getting artist rank by count
+  arrange(desc(count))
+
+DadArtistsCount <- DadStreamingData %>%
+  group_by(artistName) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+knitr::kable(head(ClareArtistsCount), caption = "Clare Top Artists by Song Count")
+knitr::kable(head(DadArtistsCount), caption = "Dad Top Artists by Song Count")
+```
+
+### Data Wrangling (Top Artists by Time Listened To)
+
+```{r}
+ClareArtistsMinutes <- ClareStreamingData %>%
+  group_by(artistName) %>%
+  summarize(minutes = sum(msPlayed)/60000) %>%
+  arrange(desc(minutes))
+
+DadArtistsMinutes <- DadStreamingData %>%
+  group_by(artistName) %>%
+  summarize(minutes = sum(msPlayed)/60000) %>%
+  arrange(desc(minutes))
+
+knitr::kable(head(ClareArtistsMinutes), caption = "Clare Top Artists by Minutes Listened")
+knitr::kable(head(DadArtistsMinutes), caption = "Dad Top Artists by Minutes Listened")
+```
+
+# Examine Top Time Periods
+
+### Data Wrangling (Isolate Years)
+
+```{r}
+ClareYears <- ClareStreamingData %>%
+  mutate(date = ymd(track_album_release_date)) %>%
+  na.omit() %>%
+  mutate(year = year(date)) %>%
+  select(year)
+
+DadYears <- DadStreamingData %>%
+  mutate(date = ymd(track_album_release_date)) %>%
+  na.omit() %>%
+  mutate(year = year(date)) %>%
+  select(year)
+```
+
+### Data Wrangling (Group by Decades)
+
+```{r}
+ClareDecades <- ClareYears %>%
+  mutate(decade = floor(year/10)*10) %>% # using floor division to get the decade in place of the year
+  group_by(decade) %>%
+  summarize(count = n()) %>%
+  mutate(clare = count/sum(count)*100)
+
+DadDecades <- DadYears %>%
+  mutate(decade = floor(year/10)*10) %>%
+  group_by(decade) %>%
+  summarize(count = n()) %>%
+  mutate(dad = count/sum(count)*100)
+```
+
+### Data Visualization (Decades)
+
+```{r}
+Decades <- ClareDecades %>%
+  full_join(DadDecades, by = c("decade" = "decade")) %>%
+  select(decade, clare, dad) %>%
+  pivot_longer(cols = c(clare, dad), names_to = "who", values_to = "percentage")
+
+ggplot(Decades) + geom_col(aes(x = decade, y = percentage, group = decade, fill = who)) + xlab("decade") + ggtitle("Clare and Dad Popular Decades")
+```
+
+# Examine Times of Day Listening
+
+### Data Wrangling (Hours of the Day)
+
+```{r}
+ClareHour <- ClareStreamingData %>%
+  mutate(date = ymd_hms(endTime), hour = hour(date)) %>% # hours are selected in a range from 0 - 23, rather than 12am to 11pm
+  select(hour) %>%
+  group_by(hour) %>%
+  summarize(clare = n())
+
+DadHour <- DadStreamingData %>%
+  mutate(date = ymd_hms(endTime), hour = hour(date)) %>%
+  select(hour) %>%
+  group_by(hour) %>%
+  summarize(dad = n())
+
+Hours <- ClareHour %>%
+  full_join(DadHour, by = c("hour" = "hour")) %>%
+  pivot_longer(cols = c(clare, dad), names_to = "who", values_to = "count")
+```
+
+### Data Visualization (Hours of the Day)
+
+```{r}
+ggplot(Hours) + geom_line(aes(x = hour, y = count, linetype = who))
+```
+
+# Examine Song Retention
+
+```{r}
+ClareRetention <- ClareStreamingData %>%
+  mutate(retention = (msPlayed/duration_ms)*100) %>%
+  na.omit() %>%
+  select(retention) %>%
+  summarize(avg_retention = mean(retention))
+
+DadRetention <- DadStreamingData %>%
+  mutate(retention = (msPlayed/duration_ms)*100) %>%
+  na.omit() %>%
+  select(retention) %>%
+  summarize(avg_retention = mean(retention))
+
+head(ClareRetention)
+head(DadRetention)
+```
+
+# Examine Similarity
+
+### Data Wrangling (Similarity)
+
+```{r}
+# getting list of unique songs and their stream counts
+ClareUnique <- ClareStreamingData %>%
+  group_by(artistName, trackName) %>%
+  select(artistName, trackName) %>%
+  summarize(clarecount = n()) %>%
+  arrange(desc(clarecount))
+  
+DadUnique <- DadStreamingData %>%
+  group_by(artistName, trackName) %>%
+  select(artistName, trackName) %>%
+  summarize(dadcount = n()) %>%
+  arrange(desc(dadcount))
+
+knitr::kable(head(ClareUnique), caption = "Clare's Top Streamed Songs")
+knitr::kable(head(DadUnique), caption = "Dad's Top Streamed Songs")
+```
+
+```{r}
+# getting our total stream counts
+claretotalstreams <- nrow(ClareStreamingData)
+dadtotalstreams <- nrow(DadStreamingData)
+
+# joining our data sets 
+Unique <- ClareUnique %>%
+  inner_join(DadUnique, by = c("artistName" = "artistName", "trackName" = "trackName")) %>% # i use inner_join so that I only keep the songs each of us have in common
+  transform(incommon = pmin(clarecount, dadcount)) %>% # i assign the variable "incommon" to be the number of streams we had in common, by taking the minimum streams between each of us to be an identical stream
+  summarize(claresimilarity = sum(incommon)/claretotalstreams*100, dadsimilarity = sum(incommon)/dadtotalstreams*100)
+
+knitr::kable(head(Unique), caption = "Similarity Scores")
+```
+
+
+
